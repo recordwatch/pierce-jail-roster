@@ -75,6 +75,9 @@ export default function BookingCard({ entry }) {
           </div>
         </div>
         <div className="card-right">
+          {entry.docTransfer && (
+            <span className="badge badge-prison" title={entry.docFacility || 'Transferred to DOC'}>→ Prison</span>
+          )}
           {detType && (
             <span className={`badge ${detentionTypeBadgeClass(detType)}`}>{detType}</span>
           )}
@@ -94,6 +97,9 @@ export default function BookingCard({ entry }) {
                 <span className="time-served-label">Time served: {formatTimeServed(entry.firstSeen, entry.releasedAt)}</span>
               )}
             </div>
+          )}
+          {entry.docTransfer && entry.docFacility && (
+            <div className="card-doc-row">Transferred to: {entry.docFacility}</div>
           )}
 
           {(age || sex || race || height || weight) && (
