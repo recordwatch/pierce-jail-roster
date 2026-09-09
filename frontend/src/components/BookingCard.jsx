@@ -1,5 +1,37 @@
 import { useState } from 'react'
 
+const WT_WARRANT    = /^(BENCH WARRANT|FAIL TO APPEAR|FAIL TO COMPLY|FAIL TO POST)$/i
+const WT_NEW_ARREST = /^PROBABLE CAUSE$/i
+const WT_HOLD       = /^(TTW|TRANS ORDER|DETAINER|DV|BAIL BOND SURRENDER)$/i
+
+function deriveDetentionType(charges) {
+  if (!charges?.length) return null
+  if (charges.some(c => /COMMITTED TO CUSTODY/i.test(c.sentenceInfo))) return 'Sentenced'
+  let warrant = false, newArrest = false, hold = false
+  for (const c of charges) {
+    const wt = c.warrantType || (c.releaseDate && !/^\d/.test(c.releaseDate) ? c.releaseDate : null)
+    if (!wt) continue
+    if (WT_NEW_ARREST.test(wt)) newArrest = true
+    else if (WT_WARRANT.test(wt)) warrant = true
+    else if (WT_HOLD.test(wt)) hold = true
+  }
+  if (!warrant && !newArrest && !hold) return null
+  const parts = []
+  if (newArrest) parts.push('New Arrest')
+  if (warrant) parts.push('Warrant')
+  if (hold) parts.push('Hold')
+  return parts.join(' + ')
+}
+
+function detentionTypeBadgeClass(dt) {
+  if (!dt) return ''
+  if (dt === 'Sentenced') return 'badge-dt-sentenced'
+  if (dt === 'New Arrest') return 'badge-dt-new-arrest'
+  if (dt === 'Warrant') return 'badge-dt-warrant'
+  if (dt === 'Hold') return 'badge-dt-hold'
+  return 'badge-dt-mixed'
+}
+
 function formatTimeServed(firstSeen, releasedAt) {
   if (!firstSeen || !releasedAt) return null
   const start = new Date(firstSeen)
@@ -17,6 +49,7 @@ function formatTimeServed(firstSeen, releasedAt) {
 export default function BookingCard({ entry }) {
   const [open, setOpen] = useState(false)
   const isReleased = entry.status === 'released'
+  const detType = deriveDetentionType(entry.charges)
 
   // Extract demographic fields — detail page returns kvPairs merged into entry
   const age      = entry.age      || entry['Age']      || null
@@ -42,6 +75,9 @@ export default function BookingCard({ entry }) {
           </div>
         </div>
         <div className="card-right">
+          {detType && (
+            <span className={`badge ${detentionTypeBadgeClass(detType)}`}>{detType}</span>
+          )}
           <span className={`badge ${isReleased ? 'badge-released' : 'badge-custody'}`}>
             {isReleased ? 'Released' : 'In Custody'}
           </span>
@@ -79,8 +115,18 @@ export default function BookingCard({ entry }) {
                     {c.charge || c.violation || c['charge description'] || c['offense'] || JSON.stringify(c)}
                     {c.counts && c.counts !== '1' && <span style={{ opacity: 0.55 }}> ×{c.counts}</span>}
                   </div>
+                  {(() => {
+                    const wt = c.warrantType || (c.releaseDate && !/^\d/.test(c.releaseDate) ? c.releaseDate : null)
+                    return wt ? <div className="charge-warrant">Hold: {wt}</div> : null
+                  })()}
                   {c.bail != null && (
                     <div className="charge-bail">Bail: ${Number(c.bail).toLocaleString()}</div>
+                  )}
+                  {c.sentenceInfo && (
+                    <div className="charge-sentence">Sentence: {c.sentenceInfo}</div>
+                  )}
+                  {c.sentenceDate && (
+                    <div className="charge-sentence">Sentenced: {c.sentenceDate}</div>
                   )}
                   {c.chargingAgency && (
                     <div className="charge-agency">Agency: {c.chargingAgency}</div>

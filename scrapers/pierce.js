@@ -64,10 +64,18 @@ function parseDetail(html) {
       }
 
       // Build charge from header-mapped fields
+      const CHARGE_KEY_MAP = {
+        'court date': 'charge',
+        'rls date/time': 'warrantType',       // LINX column contains warrant type (BENCH WARRANT, FTA, etc.)
+        'warrant type': 'warrantType',
+        'sentence date / bail': 'sentenceDate',
+        'sentence / fine': 'sentenceInfo',
+        'charge release date': 'chargeReleaseDate',
+      }
       const charge = {};
       headers.forEach((h, idx) => {
         if (!cells[idx] || cells[idx].length >= 300) return;
-        const key = h === 'court date' ? 'charge' : h === 'rls date/time' ? 'releaseDate' : h;
+        const key = CHARGE_KEY_MAP[h] || h;
         charge[key] = cells[idx];
       });
 
