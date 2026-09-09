@@ -138,6 +138,11 @@ body {
 }
 .badge-custody { background: #1E4A2E; color: #7ACA9A; }
 .badge-released { background: #2A3A2A; color: #8AAA8A; }
+.badge-dt-new-arrest { background: #3A2E14; color: #C8A050; }
+.badge-dt-warrant    { background: #2E2E14; color: #B4B464; }
+.badge-dt-hold       { background: #142A3A; color: #6A9AB8; }
+.badge-dt-sentenced  { background: #1A3228; color: #6AC890; }
+.badge-dt-mixed      { background: #2A2828; color: #9A9898; }
 
 .card-body {
   padding: 0.75rem 1rem;
@@ -182,7 +187,9 @@ body {
 .charge-row { margin-bottom: 0.6rem; padding-bottom: 0.6rem; border-bottom: 1px solid #1A2A20; }
 .charge-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 .charge-violation { font-size: 0.8rem; color: #C5D9CC; margin-bottom: 0.2rem; }
-.charge-bail, .charge-court, .charge-agency { font-size: 0.7rem; color: #6A8A76; }
+.charge-bail, .charge-court, .charge-agency, .charge-warrant, .charge-sentence { font-size: 0.7rem; color: #6A8A76; }
+.charge-warrant { color: #8A7A5A; }
+.charge-sentence { color: #7A9A7A; }
 
 /* History log */
 .history-log { }

@@ -100,6 +100,29 @@ function top(obj, n = 20) {
   return Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)
 }
 
+const WT_WARRANT   = /^(BENCH WARRANT|FAIL TO APPEAR|FAIL TO COMPLY|FAIL TO POST)$/i
+const WT_NEW_ARREST = /^PROBABLE CAUSE$/i
+const WT_HOLD      = /^(TTW|TRANS ORDER|DETAINER|DV|BAIL BOND SURRENDER)$/i
+
+function deriveDetentionType(charges) {
+  if (!charges?.length) return null
+  if (charges.some(c => /COMMITTED TO CUSTODY/i.test(c.sentenceInfo))) return 'Sentenced'
+  let warrant = false, newArrest = false, hold = false
+  for (const c of charges) {
+    const wt = c.warrantType || (c.releaseDate && !/^\d/.test(c.releaseDate) ? c.releaseDate : null)
+    if (!wt) continue
+    if (WT_NEW_ARREST.test(wt)) newArrest = true
+    else if (WT_WARRANT.test(wt)) warrant = true
+    else if (WT_HOLD.test(wt)) hold = true
+  }
+  if (!warrant && !newArrest && !hold) return null
+  const parts = []
+  if (newArrest) parts.push('New Arrest')
+  if (warrant) parts.push('Warrant')
+  if (hold) parts.push('Hold')
+  return parts.join(' + ')
+}
+
 function compute(log) {
   if (!log.length) return null
   const released = log.filter(e => e.status === 'released')
@@ -114,10 +137,18 @@ function compute(log) {
     byMonth[k] = (byMonth[k] || 0) + 1
   }
 
-  const chargeCt = {}
-  for (const e of log)
-    for (const c of (e.charges || []))
+  const chargeCt = {}, warrantCt = {}, agencyCt = {}, detentionTypeCt = {}
+  for (const e of log) {
+    const agency = e['Arresting Agency'] || e['arresting agency']
+    if (agency) agencyCt[agency] = (agencyCt[agency] || 0) + 1
+    for (const c of (e.charges || [])) {
       if (c.charge) chargeCt[c.charge] = (chargeCt[c.charge] || 0) + 1
+      const wt = c.warrantType || (c.releaseDate && !/^\d/.test(c.releaseDate) ? c.releaseDate : null)
+      if (wt) warrantCt[wt] = (warrantCt[wt] || 0) + 1
+    }
+    const dt = deriveDetentionType(e.charges)
+    if (dt) detentionTypeCt[dt] = (detentionTypeCt[dt] || 0) + 1
+  }
 
   const facCt = {}
   for (const e of log) {
@@ -127,11 +158,16 @@ function compute(log) {
 
   const raceCt = {}, genderCt = {}
   for (const e of log) {
-    const r = e.Race || e.race || 'Unknown'
-    const g = e.Gender || e.gender || e.Sex || e.sex || 'Unknown'
+    const rRaw = (e.Race || e.race || '').trim().toUpperCase()
+    const r = (!rRaw || rRaw === 'UNKNOWN') ? 'Unknown' : rRaw
     raceCt[r] = (raceCt[r] || 0) + 1
+    const gRaw = (e.Gender || e.gender || e.Sex || e.sex || '').trim().toUpperCase()
+    const g = (!gRaw || gRaw === 'UNKNOWN') ? 'Unknown' : gRaw
     genderCt[g] = (genderCt[g] || 0) + 1
   }
+  const warrantBookings   = Object.entries(detentionTypeCt).filter(([dt]) => dt.includes('Warrant')).reduce((s, [, n]) => s + n, 0)
+  const newArrestBookings = Object.entries(detentionTypeCt).filter(([dt]) => dt.includes('New Arrest')).reduce((s, [, n]) => s + n, 0)
+  const holdBookings      = Object.entries(detentionTypeCt).filter(([dt]) => dt.includes('Hold')).reduce((s, [, n]) => s + n, 0)
 
   // Day of week from bookingDate
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -189,7 +225,8 @@ function compute(log) {
   for (const e of log) {
     if (!e.name || nameCt[e.name] < 2) continue
     if (!nameCharges[e.name]) nameCharges[e.name] = new Set()
-    for (const c of (e.charges || [])) if (c.charge) nameCharges[e.name].add(c.charge)
+    for (const c of (e.charges || []))
+      if (c.charge && !/^WA\d+/i.test(c.charge)) nameCharges[e.name].add(c.charge)
   }
   const repeats = Object.entries(nameCt)
     .filter(([, n]) => n >= 2)
@@ -214,7 +251,7 @@ function compute(log) {
     avgCharges: log.length ? totalCharges / log.length : 0,
     byMonth: Object.entries(byMonth).sort(),
     byDow, byReleaseDow,
-    chargeCt, facCt, raceCt, genderCt,
+    chargeCt, warrantCt, agencyCt, detentionTypeCt, warrantBookings, newArrestBookings, holdBookings, facCt, raceCt, genderCt,
     detention,
     pctUnder24h, shortestStay, longestHistorical, longestCurrent,
     repeats,
@@ -276,6 +313,7 @@ export default function DeepStatsPage() {
 function SummaryTab({ s }) {
   const facEntries = Object.entries(s.facCt).sort((a, b) => b[1] - a[1])
   const facMax = facEntries[0]?.[1] || 1
+  const dtTotal = Object.values(s.detentionTypeCt).reduce((a, b) => a + b, 0)
   return (
     <>
       <div className="sboxes">
@@ -285,6 +323,17 @@ function SummaryTab({ s }) {
         <SBox value={s.avgStay.toFixed(1)} label="Avg Stay (days)" sub={`median ${s.medStay.toFixed(1)}d`} />
         <SBox value={s.avgCharges.toFixed(1)} label="Avg Charges / Inmate" />
       </div>
+      {dtTotal > 0 && (
+        <>
+          <h3 className="stats-h3">Booking Type</h3>
+          <div className="stats-note stats-note-gap">{dtTotal.toLocaleString()} of {s.total.toLocaleString()} bookings classifiable · bookings can count in multiple categories</div>
+          <div className="sboxes">
+            <SBox value={s.warrantBookings.toLocaleString()} label="Warrant Bookings" sub="bench warrant · FTA · FTC" />
+            <SBox value={s.newArrestBookings.toLocaleString()} label="New Arrest Bookings" sub="probable cause" />
+            <SBox value={s.holdBookings.toLocaleString()} label="Hold / Transfer" sub="TTW · detainer · bail bond" />
+          </div>
+        </>
+      )}
       <h3 className="stats-h3">Facility</h3>
       {facEntries.map(([f, n]) => <HBar key={f} label={f} value={n} max={facMax} count={n} />)}
     </>
@@ -312,10 +361,36 @@ function TrendsTab({ s }) {
 function ChargesTab({ s }) {
   const tc = top(s.chargeCt, 25)
   const max = tc[0]?.[1] || 1
+  const wt = Object.entries(s.warrantCt).sort((a, b) => b[1] - a[1])
+  const wtMax = wt[0]?.[1] || 1
+  const ag = top(s.agencyCt, 20)
+  const agMax = ag[0]?.[1] || 1
+  const dt = Object.entries(s.detentionTypeCt).sort((a, b) => b[1] - a[1])
+  const dtMax = dt[0]?.[1] || 1
+  const dtTotal = dt.reduce((sum, [, n]) => sum + n, 0)
   return (
     <>
-      <h3 className="stats-h3">Most Common Charges (top 25)</h3>
+      {dt.length > 0 && (
+        <>
+          <h3 className="stats-h3">Booking Type</h3>
+          <div className="stats-note stats-note-gap">Based on per-charge warrant types · {dtTotal.toLocaleString()} of {s.total.toLocaleString()} bookings classifiable</div>
+          {dt.map(([d, n]) => <HBar key={d} label={d} value={n} max={dtMax} count={n} />)}
+        </>
+      )}
+      <h3 className="stats-h3 stats-h3-gap">Most Common Charges (top 25)</h3>
       {tc.map(([c, n]) => <HBar key={c} label={c} value={n} max={max} count={n} />)}
+      {wt.length > 0 && (
+        <>
+          <h3 className="stats-h3 stats-h3-gap">Warrant / Hold Type (per charge)</h3>
+          {wt.map(([w, n]) => <HBar key={w} label={w} value={n} max={wtMax} count={n} />)}
+        </>
+      )}
+      {ag.length > 0 && (
+        <>
+          <h3 className="stats-h3 stats-h3-gap">Arresting Agency (top 20)</h3>
+          {ag.map(([a, n]) => <HBar key={a} label={a} value={n} max={agMax} count={n} />)}
+        </>
+      )}
     </>
   )
 }
@@ -459,4 +534,3 @@ function RecidivismTab({ s }) {
     </>
   )
 }
-
