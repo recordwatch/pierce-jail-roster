@@ -138,6 +138,7 @@ body {
 }
 .badge-custody { background: #1E4A2E; color: #7ACA9A; }
 .badge-released { background: #2A3A2A; color: #8AAA8A; }
+.badge-prison { background: #3A1A1A; color: #CC7777; border: 1px solid #5A2A2A; }
 .badge-dt-new-arrest { background: #3A2E14; color: #C8A050; }
 .badge-dt-warrant    { background: #2E2E14; color: #B4B464; }
 .badge-dt-hold       { background: #142A3A; color: #6A9AB8; }
@@ -159,6 +160,7 @@ body {
   align-items: center;
 }
 .time-served-label { font-weight: 600; color: #A0C8A0; }
+.card-doc-row { font-size: 0.78rem; color: #CC7777; margin-bottom: 0.5rem; }
 
 .card-description {
   display: grid;
