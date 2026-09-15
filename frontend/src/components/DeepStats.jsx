@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import Header from './Header'
 
-const TABS = ['Summary', 'Trends', 'Charges', 'Demographics', 'Detention', 'Recidivism']
+const TABS = ['Summary', 'Trends', 'Charges', 'Demographics', 'Detention', 'Recidivism', 'Bail']
 
 // Pierce County, WA — 2020 Decennial Census (P8/P9)
 const CENSUS_POP = {
@@ -29,6 +29,50 @@ function normalizeRace(e) {
   if (r.includes('MULTI') || r.includes('TWO') || r.includes('MORE')) return 'Two or More Races'
   if (r && r !== 'UNKNOWN' && r !== '')                            return 'Other'
   return null
+}
+
+// Charge name normalization — maps LINX abbreviation variants to canonical names
+const CHARGE_NORM = [
+  [/^POSS(ESSION)?(\s+OF)?\s+CONTROLLED\s+SUB(STANCE)?(\s*-\s*KNOWINGLY)?$/i, 'Possession of Controlled Substance'],
+  [/^NARCOTICS\s*-\s*CONTR\s+SUB$/i,                                           'Possession of Controlled Substance'],
+  [/^UPCS(\s+W\/?\s*INTENT)?$/i,                                                'Possession of Controlled Substance'],
+  [/^THEFT\s+3(RD)?$/i,                                                         'Theft 3rd Degree'],
+  [/^THEFT\s+2(ND)?$/i,                                                         'Theft 2nd Degree'],
+  [/^THEFT\s+1(ST)?$/i,                                                         'Theft 1st Degree'],
+  [/^DWLS\/R\s+1ST\/2ND$/i,                                                    'DWLS/DWLR'],
+  [/^CRIM(INAL)?\s+TRESP(ASS)?\s*(2(ND)?)?$/i,                                'Trespass 2nd Degree'],
+  [/^TRESPASS\s+2(ND)?$/i,                                                      'Trespass 2nd Degree'],
+  [/^CRIM(INAL)?\s+TRESP(ASS)?\s*1(ST)?$/i,                                   'Trespass 1st Degree'],
+  [/^ASLT\s+4\s*(\/?DV)?$/i,                                                   'Assault 4th Degree'],
+  [/^ASLT\s+3\s*(\/?DV)?$/i,                                                   'Assault 3rd Degree'],
+  [/^ASLT\s+2\s*-\s*DV$/i,                                                     'Assault 2nd Degree /DV'],
+  [/^ASLT\s+2$/i,                                                               'Assault 2nd Degree'],
+  [/^ASLT\s+1\s*(\/?DV)?$/i,                                                   'Assault 1st Degree'],
+  [/^CRIM\s+ASLT\s*\/DV$/i,                                                    'Assault /DV'],
+  [/^OBSTR\s+P(UBLIC\s+)?O(FFICER)?$/i,                                        'Obstruct Public Officer'],
+  [/^OBSTR\s+PUB\s+SERV$/i,                                                    'Obstruct Public Officer'],
+  [/^RECK\s+DR(I?V(ING)?)?$/i,                                                  'Reckless Driving'],
+  [/^FEL\s+PUR\/ELUDE$/i,                                                       'Felony Elude'],
+  [/^FEL\s+HARASS(MENT)?\s*([-/]\s*DV)?$/i,                                    'Felony Harassment /DV'],
+  [/^FEL\s+HARASS\s*\(NON\s*DV\)$/i,                                           'Felony Harassment (Non-DV)'],
+  [/^RES(IDENTIAL)?\s+BURG(LARY)?$/i,                                           'Residential Burglary'],
+  [/^BURGLARY\s+2(ND)?$/i,                                                      'Burglary 2nd Degree'],
+  [/^RESIST\s+ARR(EST)?$/i,                                                     'Resist Arrest'],
+  [/^MAL\s+MISCH?\s*3(RD)?$/i,                                                  'Malicious Mischief 3rd'],
+  [/^IDENT(ITY)?\s+THF?T\s*2(ND)?$/i,                                           'Identity Theft 2nd Degree'],
+  [/^VIO\s+(PROT|NC)\s+OR(D)?\s*\/DV$/i,                                       'Violation of Court Order /DV'],
+  [/^UNL\s+POSS\s+FIREARM\s*1$/i,                                              'Unlawful Possession of Firearm 1'],
+  [/^LPDA$/i,                                                                   'LPDA'],
+  [/^PROBAT(ION)?\s+HLD$/i,                                                    'Probation Hold'],
+  [/^DUI\s+WITH\s+PRIOR/i,                                                     'DUI w/ Prior Conviction'],
+]
+
+function normalizeCharge(ch) {
+  if (!ch) return ch
+  for (const [pat, norm] of CHARGE_NORM) {
+    if (pat.test(ch.trim())) return norm
+  }
+  return ch
 }
 
 function HBar({ label, value, max, count }) {
@@ -123,6 +167,10 @@ function deriveDetentionType(charges) {
   return parts.join(' + ')
 }
 
+function entryBailTotal(e) {
+  return (e.charges || []).reduce((s, c) => s + (c.bail != null ? Number(c.bail) : 0), 0)
+}
+
 function compute(log) {
   if (!log.length) return null
   const released = log.filter(e => e.status === 'released')
@@ -142,7 +190,10 @@ function compute(log) {
     const agency = e['Arresting Agency'] || e['arresting agency']
     if (agency) agencyCt[agency] = (agencyCt[agency] || 0) + 1
     for (const c of (e.charges || [])) {
-      if (c.charge) chargeCt[c.charge] = (chargeCt[c.charge] || 0) + 1
+      if (c.charge && !/^WA\d+/i.test(c.charge)) {
+        const norm = normalizeCharge(c.charge)
+        chargeCt[norm] = (chargeCt[norm] || 0) + 1
+      }
       const wt = c.warrantType || (c.releaseDate && !/^\d/.test(c.releaseDate) ? c.releaseDate : null)
       if (wt) warrantCt[wt] = (warrantCt[wt] || 0) + 1
     }
@@ -152,17 +203,17 @@ function compute(log) {
 
   const facCt = {}
   for (const e of log) {
-    const f = e.facility || 'Unknown'
+    const f = e.facility || 'Undisclosed'
     facCt[f] = (facCt[f] || 0) + 1
   }
 
   const raceCt = {}, genderCt = {}
   for (const e of log) {
     const rRaw = (e.Race || e.race || '').trim().toUpperCase()
-    const r = (!rRaw || rRaw === 'UNKNOWN') ? 'Unknown' : rRaw
+    const r = (!rRaw || rRaw === 'UNKNOWN') ? 'Undisclosed' : rRaw
     raceCt[r] = (raceCt[r] || 0) + 1
     const gRaw = (e.Gender || e.gender || e.Sex || e.sex || '').trim().toUpperCase()
-    const g = (!gRaw || gRaw === 'UNKNOWN') ? 'Unknown' : gRaw
+    const g = (!gRaw || gRaw === 'UNKNOWN' || gRaw === 'X') ? 'Undisclosed' : gRaw
     genderCt[g] = (genderCt[g] || 0) + 1
   }
   const warrantBookings   = Object.entries(detentionTypeCt).filter(([dt]) => dt.includes('Warrant')).reduce((s, [, n]) => s + n, 0)
@@ -184,8 +235,9 @@ function compute(log) {
     if (d === null) continue
     for (const c of (e.charges || []))
       if (c.charge && !/^WA\d+/i.test(c.charge)) {
-        stayByCh[c.charge] = stayByCh[c.charge] || []
-        stayByCh[c.charge].push(d)
+        const norm = normalizeCharge(c.charge)
+        stayByCh[norm] = stayByCh[norm] || []
+        stayByCh[norm].push(d)
       }
   }
   const detention = Object.entries(stayByCh)
@@ -226,7 +278,7 @@ function compute(log) {
     if (!e.name || nameCt[e.name] < 2) continue
     if (!nameCharges[e.name]) nameCharges[e.name] = new Set()
     for (const c of (e.charges || []))
-      if (c.charge && !/^WA\d+/i.test(c.charge)) nameCharges[e.name].add(c.charge)
+      if (c.charge && !/^WA\d+/i.test(c.charge)) nameCharges[e.name].add(normalizeCharge(c.charge))
   }
   const repeats = Object.entries(nameCt)
     .filter(([, n]) => n >= 2)
@@ -241,6 +293,39 @@ function compute(log) {
     if (r) raceCensus[r] = (raceCensus[r] || 0) + 1
   }
   const raceCensusTotal = Object.values(raceCensus).reduce((a, b) => a + b, 0)
+
+  // Bail stats — bail is stored on WA# sub-charges, sum per entry
+  let totalBailSet = 0
+  const bailEntries = []
+  for (const e of log) {
+    const hasBailField = (e.charges || []).some(c => c.bail != null)
+    if (!hasBailField) continue
+    const bail = entryBailTotal(e)
+    const namedCharges = (e.charges || [])
+      .filter(c => c.charge && !/^WA\d+/i.test(c.charge))
+      .map(c => normalizeCharge(c.charge))
+      .filter(Boolean)
+    if (bail > 0) {
+      totalBailSet += bail
+      bailEntries.push({ name: e.name, bail, bookingDate: e.bookingDate, status: e.status, charges: namedCharges })
+    }
+  }
+  bailEntries.sort((a, b) => b.bail - a.bail)
+  const bailNonZero = bailEntries.length
+  const bailZero = log.filter(e => (e.charges || []).some(c => c.bail != null) && entryBailTotal(e) === 0).length
+  const avgBail = bailNonZero > 0 ? totalBailSet / bailNonZero : 0
+
+  // DOC stats
+  const docCheckedCount = log.filter(e => e.docCheckedAt).length
+  const docTransferCount = log.filter(e => e.docTransfer === true).length
+  const docTransfers = log.filter(e => e.docTransfer === true)
+    .map(e => ({ name: e.name, facility: e.docFacility, bookingDate: e.bookingDate }))
+
+  // Data start date (oldest entry)
+  const oldest = log[log.length - 1]
+  const dataStart = oldest?.firstSeen
+    ? oldest.firstSeen.split(',')[0].trim()
+    : oldest?.bookingDate || '—'
 
   return {
     total: log.length,
@@ -257,6 +342,9 @@ function compute(log) {
     repeats,
     uniqueNames: Object.keys(nameCt).length,
     raceCensus, raceCensusTotal,
+    totalBailSet, avgBail, bailNonZero, bailZero, bailEntries,
+    docCheckedCount, docTransferCount, docTransfers,
+    dataStart,
   }
 }
 
@@ -298,12 +386,13 @@ export default function DeepStatsPage() {
             ))}
           </div>
 
-          {tab === 'Summary' && <SummaryTab s={s} />}
-          {tab === 'Trends' && <TrendsTab s={s} />}
-          {tab === 'Charges' && <ChargesTab s={s} />}
+          {tab === 'Summary'      && <SummaryTab s={s} />}
+          {tab === 'Trends'       && <TrendsTab s={s} />}
+          {tab === 'Charges'      && <ChargesTab s={s} />}
           {tab === 'Demographics' && <DemographicsTab s={s} />}
-          {tab === 'Detention' && <DetentionTab s={s} />}
-          {tab === 'Recidivism' && <RecidivismTab s={s} />}
+          {tab === 'Detention'    && <DetentionTab s={s} />}
+          {tab === 'Recidivism'   && <RecidivismTab s={s} />}
+          {tab === 'Bail'         && <BailTab s={s} />}
         </div>
       )}
     </div>
@@ -321,7 +410,10 @@ function SummaryTab({ s }) {
         <SBox value={s.inCustody.toLocaleString()} label="In Custody" />
         <SBox value={s.released.toLocaleString()} label="Releases Tracked" />
         <SBox value={s.avgStay.toFixed(1)} label="Avg Stay (days)" sub={`median ${s.medStay.toFixed(1)}d`} />
-        <SBox value={s.avgCharges.toFixed(1)} label="Avg Charges / Inmate" />
+        <SBox value={s.avgCharges.toFixed(1)} label="Avg Charges / Booking" />
+        {s.docTransferCount > 0 && (
+          <SBox value={s.docTransferCount} label="Confirmed DOC Transfers" sub={`of ${s.docCheckedCount.toLocaleString()} checked`} />
+        )}
       </div>
       {dtTotal > 0 && (
         <>
@@ -413,7 +505,7 @@ function DemographicsTab({ s }) {
 
   return (
     <>
-      <h3 className="stats-h3">Race (raw LINX values)</h3>
+      <h3 className="stats-h3">Race (LINX values)</h3>
       {raceE.map(([r, n]) => <HBar key={r} label={r} value={n} max={s.total} count={n} />)}
       <h3 className="stats-h3 stats-h3-gap">Gender</h3>
       {genderE.map(([g, n]) => <HBar key={g} label={g} value={n} max={s.total} count={n} />)}
@@ -458,7 +550,7 @@ function DetentionTab({ s }) {
         <div className="sbox">
           <div className="sbox-val">{s.pctUnder24h}%</div>
           <div className="sbox-label">Released in &lt;24 Hours</div>
-          <div className="sbox-sub">{s.stays?.filter ? '' : ''}{s.released > 0 ? `${Math.round(s.released * s.pctUnder24h / 100)} of ${s.released}` : '—'}</div>
+          <div className="sbox-sub">{s.released > 0 ? `${Math.round(s.released * s.pctUnder24h / 100)} of ${s.released}` : '—'}</div>
         </div>
         {s.shortestStay && (
           <div className="sbox">
@@ -512,8 +604,21 @@ function RecidivismTab({ s }) {
   const pct = s.uniqueNames ? ((s.repeats.length / s.uniqueNames) * 100).toFixed(1) : 0
   return (
     <>
-      <div className="stats-note stats-note-gap">
-        Repeat rate {pct}% · {s.repeats.length} repeat individuals · {s.uniqueNames.toLocaleString()} unique tracked
+      <div className="sboxes" style={{ marginBottom: '1.5rem' }}>
+        <SBox
+          value={`${pct}%`}
+          label="Recidivism Rate"
+          sub="bookings with ≥2 appearances"
+        />
+        <SBox
+          value={s.repeats.length.toLocaleString()}
+          label="Repeat Individuals"
+          sub={s.dataStart ? `since ${s.dataStart}` : undefined}
+        />
+        <SBox
+          value={s.uniqueNames.toLocaleString()}
+          label="Unique Individuals Tracked"
+        />
       </div>
       {s.repeats.length === 0 ? (
         <div className="stats-note">No repeat bookings yet.</div>
@@ -530,6 +635,84 @@ function RecidivismTab({ s }) {
             ))}
           </tbody>
         </table>
+      )}
+    </>
+  )
+}
+
+function BailTab({ s }) {
+  const top10 = s.bailEntries.slice(0, 10)
+  return (
+    <>
+      <div className="sboxes" style={{ marginBottom: '1.5rem' }}>
+        <SBox
+          value={`$${(s.totalBailSet / 1_000_000).toFixed(1)}M`}
+          label="Total Bail Set"
+          sub="all bookings with bail"
+        />
+        <SBox
+          value={`$${Math.round(s.avgBail).toLocaleString()}`}
+          label="Avg Bail (non-zero)"
+        />
+        <SBox
+          value={s.bailNonZero.toLocaleString()}
+          label="Bookings with Bail Set"
+        />
+        <SBox
+          value={s.bailZero.toLocaleString()}
+          label="Released w/o Bail"
+          sub="bail field present, amount $0"
+        />
+        {top10[0] && (
+          <SBox
+            value={`$${top10[0].bail.toLocaleString()}`}
+            label="Highest Single Bail"
+            sub={top10[0].name}
+          />
+        )}
+      </div>
+
+      {top10.length > 0 && (
+        <>
+          <h3 className="stats-h3">Top 10 Bail Leaderboard</h3>
+          <table className="stats-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Bail</th>
+                <th>Status</th>
+                <th>Booked</th>
+                <th>Charges</th>
+              </tr>
+            </thead>
+            <tbody>
+              {top10.map((e, i) => (
+                <tr key={`${e.name}-${i}`}>
+                  <td style={{ color: '#6A8A76' }}>{i + 1}</td>
+                  <td>{e.name}</td>
+                  <td style={{ color: '#C5D9CC', fontWeight: 500 }}>${e.bail.toLocaleString()}</td>
+                  <td>
+                    <span style={{
+                      fontSize: '0.65rem',
+                      padding: '0.1rem 0.4rem',
+                      borderRadius: '2px',
+                      background: e.status === 'in_custody' ? '#1E4A2E' : '#2A3A2A',
+                      color: e.status === 'in_custody' ? '#7ACA9A' : '#8AAA8A',
+                    }}>
+                      {e.status === 'in_custody' ? 'In Custody' : 'Released'}
+                    </span>
+                  </td>
+                  <td style={{ color: '#6A8A76' }}>{e.bookingDate}</td>
+                  <td style={{ color: '#8AAA96', fontSize: '0.72rem' }}>{e.charges.slice(0, 3).join(', ') || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="stats-note" style={{ marginTop: '0.75rem' }}>
+            Bail amounts from LINX charge detail pages · reflects bail at time of scraping · may not reflect subsequent modifications
+          </div>
+        </>
       )}
     </>
   )
