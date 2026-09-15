@@ -51,6 +51,10 @@ export default function BookingCard({ entry }) {
   const isReleased = entry.status === 'released'
   const detType = deriveDetentionType(entry.charges)
 
+  const visibleCharges = (entry.charges || []).filter(c => !c.charge || !/^WA\d+/i.test(c.charge))
+  const totalBail = (entry.charges || []).reduce((s, c) => s + (c.bail != null ? Number(c.bail) : 0), 0)
+  const hasBail = (entry.charges || []).some(c => c.bail != null)
+
   // Extract demographic fields — detail page returns kvPairs merged into entry
   const age      = entry.age      || entry['Age']      || null
   const sex      = entry.sex      || entry['Sex']      || entry['Gender'] || null
@@ -112,10 +116,16 @@ export default function BookingCard({ entry }) {
             </div>
           )}
 
-          {entry.charges && entry.charges.length > 0 && (
+          {hasBail && totalBail > 0 && (
+            <div className="card-release-row">
+              <span>Total Bail: <strong style={{ color: '#C5D9CC' }}>${totalBail.toLocaleString()}</strong></span>
+            </div>
+          )}
+
+          {visibleCharges.length > 0 && (
             <div className="card-charges">
-              <div className="charges-title">Charges ({entry.charges.length})</div>
-              {entry.charges.map((c, i) => (
+              <div className="charges-title">Charges ({visibleCharges.length})</div>
+              {visibleCharges.map((c, i) => (
                 <div key={i} className="charge-row">
                   <div className="charge-violation">
                     {c.charge || c.violation || c['charge description'] || c['offense'] || JSON.stringify(c)}
